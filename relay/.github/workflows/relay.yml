@@ -1,10 +1,10 @@
 # orm-china-relay · monthly dual-mode railway relay for @local/orm-china-viewer
 # Modes (keep tag sets in sync with orm-china-viewer scripts/filter_railway.py
-# and lib/convert.js — the plugin test suite asserts all three agree):
-#   all  (A) — national + urban rail ways (subway/tram/light_rail),
+# and lib/convert.js - the plugin test suite asserts all three agree):
+#   all  (A) - national + urban rail ways (subway/tram/light_rail),
 #              stations/halts/tram_stops
-#   rail (B) — national rail only; urban ways AND urban stations excluded
-#              (a subway station is railway=station + subway=yes — excluded
+#   rail (B) - national rail only; urban ways AND urban stations excluded
+#              (a subway station is railway=station + subway=yes - excluded
 #              here so stops and lines always stay in the same set)
 # Schedule: monthly on the 1st at 03:00 UTC (11:00 Beijing). Manual dispatch
 # supported. Rolling releases under tags data-all-latest / data-rail-latest.
@@ -81,5 +81,5 @@ jobs:
           gh release create "${{ matrix.tag }}" \
             ${{ matrix.name }} ${{ matrix.name }}.sha256 \
             ${{ matrix.mode }}.fileinfo.txt generated-at.txt \
-            --title "China railway extract — ${{ matrix.mode }} (rolling)" \
+            --title "China railway extract - ${{ matrix.mode }} (rolling)" \
             --notes "Filtered from download.geofabrik.de/asia/china-latest.osm.pbf (mode: ${{ matrix.mode }}). Data (c) OpenStreetMap contributors, ODbL 1.0. Regenerated monthly + on dispatch; see fileinfo for counts."

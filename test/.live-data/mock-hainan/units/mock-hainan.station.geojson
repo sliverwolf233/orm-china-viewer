@@ -1,0 +1,1 @@
+{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"Point","coordinates":[109.6,19.1]},"properties":{"railway":"station","name":"八所"}},{"type":"Feature","geometry":{"type":"Point","coordinates":[110,18.9]},"properties":{"railway":"halt","name":"小板桥"}}]}

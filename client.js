@@ -423,7 +423,7 @@ window.__ModuleLoader__.load({
 			return (bytes / 1048576).toFixed(1) + ' MB';
 		}
 
-function OrmMap({ mapRef, showEmpty, t }) {
+function OrmMap({ mapRef, showEmpty, t, diagOn }) {
 			const containerRef = useRef(null);
 		useEffect(() => {
 			const L = window.L;
@@ -431,7 +431,7 @@ function OrmMap({ mapRef, showEmpty, t }) {
 			let map = null;
 			let observer = null;
 			try {
-				map = L.map(containerRef.current, { preferCanvas: true, minZoom: 3, maxZoom: 14, zoomControl: true, attributionControl: false });
+				map = L.map(containerRef.current, { preferCanvas: true, minZoom: 3, maxZoom: 14, zoomControl: true, attributionControl: false, zoomAnimation: false, markerZoomAnimation: false, fadeAnimation: false, inertia: false });
 				mapRef.current = map;
 				// the host may lay out after mount (slots/tabs/theme switches): keep the map sized to its container
 				const resize = () => { try { map.invalidateSize(); } catch { /* detached */ } };
@@ -445,6 +445,54 @@ function OrmMap({ mapRef, showEmpty, t }) {
 				// never let map init take the panel down; the empty overlay still renders
 				mapRef.current = null;
 			}
+				// perf diagnostics (task-22 r4): frame timing + layer stats, toggle via localStorage.ormDiag=1
+			if (diagOn === true) {
+				const diag = document.createElement('div');
+				diag.className = 'dsh-orm-diag';
+				diag.style.cssText = 'position:absolute;top:4px;left:4px;z-index:900;font:10px monospace;color:#4dd0e1;background:rgba(0,0,0,0.7);padding:2px 6px;border-radius:3px;pointer-events:none;';
+				containerRef.current.parentElement?.appendChild(diag);
+				let frames = 0, last = performance.now();
+				let rafHandle = 0;
+				let stopped = false;
+				const tick = () => {
+					if (stopped) return;
+					try {
+						frames++;
+						const now = performance.now();
+						if (now - last >= 500) {
+							const fps = Math.round(frames * 1000 / (now - last));
+							const layers = window.__ormLoadedGroups ? Object.keys(window.__ormLoadedGroups).length : 0;
+							diag.textContent = fps + 'fps | ' + layers + ' units | z' + map.getZoom().toFixed(1);
+							frames = 0; last = now;
+						}
+					} catch { stopped = true; return; }
+					rafHandle = requestAnimationFrame(tick);
+				};
+				rafHandle = requestAnimationFrame(tick);
+				ctx2DiagCleanup = () => { stopped = true; cancelAnimationFrame(rafHandle); diag.remove(); };
+			}
+
+		// one-shot click → nearest rail feature popup (no per-layer interactive overhead)
+			map.on('click', (e) => {
+				try {
+					const threshold = Math.max(5, 10 / Math.pow(2, 14 - map.getZoom()));
+					let best = null, bestDist = Infinity;
+					const groups = window.__ormLoadedGroups ?? {};
+					for (const gid of Object.keys(groups)) {
+						const g = groups[gid];
+						if (g.rail === undefined) continue;
+						for (const layer of g.rail.getLayers()) {
+							const ll = layer.getLatLng ? layer.getLatLng() : null;
+							if (ll === null) continue;
+							const d = map.distance(e.latlng, ll);
+							if (d < bestDist) { bestDist = d; best = layer; }
+						}
+					}
+					if (best !== null && bestDist < threshold * 10) {
+						best.openPopup();
+					}
+				} catch { /* click query best-effort */ }
+			});
 			return () => {
 				try { observer?.disconnect(); } catch { /* gone */ }
 				try { map?.remove(); } catch { /* gone */ }
@@ -464,7 +512,8 @@ function OrmPage({ t, api, theme }) {
 			const [showStations, setShowStations] = useState(true);
 			const [loaded, setLoaded] = useState({}); // unitId -> {rail: L.layerGroup, station: L.layerGroup}
 			const [loadingUnit, setLoadingUnit] = useState('');
-			const [emptyUnits, setEmptyUnits] = useState({}); // unitId -> 'empty' | 'missing'
+			const [emptyUnits, setEmptyUnits] = useState({});
+			const [diagOn, setDiagOn] = useState(() => { try { return localStorage.getItem('ormDiag') === '1'; } catch { return false; } }); // unitId -> 'empty' | 'missing'
 			const [unitError, setUnitError] = useState('');
 			const mapRef = useRef(null);
 			const [view, setView] = useState({ center: [35.5, 104.5], zoom: 4 });
@@ -495,6 +544,55 @@ function OrmPage({ t, api, theme }) {
 				mapRef.current.setView(state.panel.center, state.panel.zoom);
 			}, [state]);
 
+			const evictLRU = useCallback(() => {
+				const entries = Object.entries(loaded);
+				if (entries.length === 0) return;
+				let total = 0;
+				for (const [, g] of entries) total += g.bytes ?? 0;
+				if (total <= LOADED_BUDGET) return;
+				// evict the first (oldest by insertion order) until under budget
+				for (const [id, g] of entries) {
+					if (total <= LOADED_BUDGET) break;
+					if (id === 'cn-overview') continue; // overview never evicted (it is the far-zoom backbone)
+					try { g.rail.remove(); g.station.remove(); } catch { /* gone */ }
+					delete loaded[id];
+					total -= g.bytes ?? 0;
+					setEmptyUnits((prev) => { const n = { ...prev }; delete n[id]; return n; });
+				}
+			}, [loaded]);
+
+			// task-26: viewport-aware unload with hysteresis
+			const unloadTimer = useRef(null);
+			const unloadOutsideViewport = useCallback(() => {
+				const map = mapRef.current;
+				if (map === null) return;
+				const b = map.getBounds();
+				const latSpan = b.getNorth() - b.getSouth();
+				const lonSpan = b.getEast() - b.getWest();
+				const mLat = latSpan * 1.0;
+				const mLon = lonSpan * 1.0;
+				const s = b.getSouth() - mLat, n = b.getNorth() + mLat;
+				const w = b.getWest() - mLon, e = b.getEast() + mLon;
+				for (const uid of Object.keys(loaded)) {
+					if (uid === 'cn-overview') continue;
+					const g = loaded[uid];
+					if (!g.bbox) continue;
+					const [cw, cs, ce, cn] = g.bbox;
+					if (ce < w || cw > e || cn < s || cs > n) {
+						try { g.rail.remove(); g.station.remove(); } catch { }
+						setLoaded((prev) => { const next = { ...prev }; delete next[uid]; return next; });
+						setEmptyUnits((prev) => { const next = { ...prev }; delete next[uid]; return next; });
+					}
+				}
+			}, [loaded]);
+			const scheduleViewportUnload = useCallback(() => {
+				if (unloadTimer.current !== null) clearTimeout(unloadTimer.current);
+				unloadTimer.current = setTimeout(() => {
+					unloadTimer.current = null;
+					unloadOutsideViewport();
+				}, 3000);
+			}, [unloadOutsideViewport]);
+
 			const loadUnit = useCallback(async (unit) => {
 				const L = window.L;
 				const map = mapRef.current;
@@ -516,7 +614,7 @@ function OrmPage({ t, api, theme }) {
 											weight: 1,
 											fillColor: f?.properties?.railway === 'halt' ? '#9e9e9e' : '#e0e0e0',
 											fillOpacity: 1
-										}).bindTooltip(String(f?.properties?.name ?? f?.properties?.railway ?? ''), { direction: 'top' }),
+										}).on('mouseover', function () { this.bindTooltip(String(f?.properties?.name ?? f?.properties?.railway ?? ''), { direction: 'top' }).openTooltip(); }),
 										style: {}
 									})
 							}).bindPopup((layer) => buildPopupEl(layer?.feature?.properties ?? {}, t)).addTo(groups[klass]);
@@ -524,8 +622,10 @@ function OrmPage({ t, api, theme }) {
 					}
 					if (showRail) groups.rail.addTo(map);
 					if (showStations) groups.station.addTo(map);
+				window.__ormLoadedGroups = loaded;
 				groups.bytes = (unit.bytes?.rail ?? 0) + (unit.bytes?.station ?? 0);
-					setLoaded((prev) => ({ ...prev, [unit.id]: groups }));
+					groups.bbox = unit.bbox;
+				setLoaded((prev) => ({ ...prev, [unit.id]: groups }));
 				evictLRU();
 					if (groups.rail.getLayers().length + groups.station.getLayers().length === 0) {
 						setEmptyUnits((prev) => ({ ...prev, [unit.id]: 'empty' }));
@@ -548,22 +648,6 @@ function OrmPage({ t, api, theme }) {
 
 			// task-22 O2: LRU eviction — keep loaded units under a byte budget (~60 MiB)
 			const LOADED_BUDGET = 62914560;
-			const evictLRU = useCallback(() => {
-				const entries = Object.entries(loaded);
-				if (entries.length === 0) return;
-				let total = 0;
-				for (const [, g] of entries) total += g.bytes ?? 0;
-				if (total <= LOADED_BUDGET) return;
-				// evict the first (oldest by insertion order) until under budget
-				for (const [id, g] of entries) {
-					if (total <= LOADED_BUDGET) break;
-					if (id === 'cn-overview') continue; // overview never evicted (it is the far-zoom backbone)
-					try { g.rail.remove(); g.station.remove(); } catch { /* gone */ }
-					delete loaded[id];
-					total -= g.bytes ?? 0;
-					setEmptyUnits((prev) => { const n = { ...prev }; delete n[id]; return n; });
-				}
-			}, [loaded]);
 
 				setLoaded((prev) => {
 					const groups = prev[unitId];
@@ -628,10 +712,12 @@ function OrmPage({ t, api, theme }) {
 				const onMove = () => {
 					if (timer !== null) clearTimeout(timer);
 					timer = setTimeout(loadIntersecting, 400);
+					scheduleViewportUnload();
 				};
 				map.on('moveend', onMove);
 				loadIntersecting();
 				return () => {
+					if (unloadTimer.current !== null) clearTimeout(unloadTimer.current);
 					map.off('moveend', onMove);
 					if (timer !== null) clearTimeout(timer);
 				};
@@ -716,12 +802,13 @@ function OrmPage({ t, api, theme }) {
 					h('button', { className: 'dsh-orm-btn' + (showRail ? ' on' : ''), onClick: () => toggleClass('rail') }, t('layer.rail')),
 					h('button', { className: 'dsh-orm-btn' + (showStations ? ' on' : ''), onClick: () => toggleClass('station') }, t('layer.station')),
 					h('button', { className: 'dsh-orm-btn', disabled: busy, onClick: () => { void doFetch(); } }, busy ? t('action.fetching') : t('action.fetch')),
-					h('button', { className: 'dsh-orm-btn', disabled: pbfBusy, onClick: () => { void doPbf(); }, title: 'download.openstreetmap.fr china-latest.osm.pbf (A path)' }, pbfBusy ? '…' : t('action.pbf'))),
+					h('button', { className: 'dsh-orm-btn', disabled: pbfBusy, onClick: () => { void doPbf(); }, title: 'download.openstreetmap.fr china-latest.osm.pbf (A path)' }, pbfBusy ? '…' : t('action.pbf')),
+					h('button', { className: 'dsh-orm-btn' + (diagOn ? ' on' : ''), onClick: () => { const v = !diagOn; setDiagOn(v); try { localStorage.setItem('ormDiag', v ? '1' : '0'); } catch { } }, title: 'performance overlay' }, 'perf')),
 				(summary !== null && summary.scoped && summary.unitsTotal > 0 && summary.unitsDone === 0)
 					? h('div', { className: 'dsh-orm-empty' }, t('status.empty'))
 					: null,
 				h('div', { className: 'dsh-orm-body' },
-					h(OrmMap, { mapRef, t, showEmpty: Object.keys(loaded).length === 0 }),
+					h(OrmMap, { mapRef, t, showEmpty: Object.keys(loaded).length === 0, diagOn }),
 					h('div', { className: 'dsh-orm-side' },
 						summary !== null && summary.scoped ? h('div', { style: { fontSize: 11, color: 'var(--orm-text-faint)' } }, t(summary.mode === 'grid' ? 'mode.grid' : 'mode.area')) : null,
 						unitError !== '' ? h('div', { className: 'dsh-orm-err' }, unitError) : null,
@@ -761,12 +848,41 @@ function OrmPage({ t, api, theme }) {
 				fetchNow: (request) => unwrap(ctx.remote.orm.fetchNow(request || {})),
 				follow: (signal) => ctx.remote.orm.follow(signal)
 			};
-		const themeHub = createThemeHub(ctx);
-		function OrmMain() {
+				// task-27 r2: black-box error boundary — panel never goes silently blank
+		class OrmErrorBoundary extends React.Component {
+			constructor(props) {
+				super(props);
+				this.state = { error: null };
+			}
+			static getDerivedStateFromError(error) {
+				return { error };
+			}
+			componentDidCatch(error, info) {
+				// fire-and-forget report to Host for disk logging
+				try {
+					const line = new Date().toISOString() + ' | ' + String(error?.stack ?? error?.message ?? error).slice(0, 2000) + '\n';
+					console.error('[orm-china-viewer]', line);
+				} catch { }
+			}
+			render() {
+				if (this.state.error !== null) {
+					const h2 = React.createElement;
+					return h2('div', { style: { padding: '16px', color: '#e2a2a8', fontSize: 12, fontFamily: 'monospace', overflow: 'auto', height: '100%' } },
+						h2('h3', { style: { color: '#e2a2a8', marginBottom: '8px' } }, 'Panel error (auto-recovered)'),
+						h2('pre', { style: { whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, String(this.state.error?.stack ?? this.state.error?.message ?? this.state.error)),
+						h2('button', { className: 'dsh-orm-btn', onClick: () => this.setState({ error: null }), style: { marginTop: '8px' } }, 'Retry'));
+				}
+				return this.props.children;
+			}
+		}
+
+const themeHub = createThemeHub(ctx);
+		function OrmMainInner() {
 			const [theme, setTheme] = useState(themeHub.current);
 			useEffect(() => themeHub.subscribe(setTheme), [setTheme]);
 			return h(OrmPage, { t, api, theme });
 		}
+			const OrmMain = () => React.createElement(OrmErrorBoundary, null, React.createElement(OrmMainInner));
 			ctx.slots.inject('main', () => ctx.slots.register({
 				name: 'main',
 				key: PANEL_ID,

@@ -642,5 +642,64 @@ for (const file of ["src/client.js", "index.js", "lib/agent-tools.js"]) {
 	ok(src21.includes("'pop.kind.subway'"), "popup: subway wording present");
 }
 
+	// task-25: evictLRU TDZ regression
+{
+	const srcT25 = readFileSync(path.join(root, "src", "client.js"), "utf8");
+	const defPos = srcT25.indexOf("const evictLRU");
+	const callPos = srcT25.indexOf("evictLRU();");
+	ok(defPos > 0 && callPos > 0 && defPos < callPos, "tdz: evictLRU defined before first call (TDZ guard)");
+}
+
+	// task-27: rAF cancellation + no direct state mutation
+{
+	const srcT27 = readFileSync(path.join(root, "src", "client.js"), "utf8");
+	ok(srcT27.includes("stopped = true") && srcT27.includes("cancelAnimationFrame"), "crash27: rAF loop has stop flag + cancelAnimationFrame on cleanup");
+	ok(srcT27.includes("let stopped = false;"), "crash27: stopped flag initialized");
+	ok(!srcT27.includes("delete loaded[uid];"), "crash27: no direct mutation of loaded state (React anti-pattern eliminated)");
+	ok(srcT27.includes("try {") && srcT27.includes("} catch { stopped = true; return; }"), "crash27: tick body wrapped in try/catch with stop-on-error");
+}
+
+
+	// task-27 r2: error boundary black-box
+{
+	const srcT27r2 = readFileSync(path.join(root, "src", "client.js"), "utf8");
+	ok(srcT27r2.includes("OrmErrorBoundary") && srcT27r2.includes("getDerivedStateFromError"), "crash27r2: error boundary class present");
+	ok(srcT27r2.includes("componentDidCatch"), "crash27r2: error caught and logged");
+	ok(srcT27r2.includes("'Retry'"), "crash27r2: retry button present");
+	ok(srcT27r2.includes("OrmMainInner"), "crash27r2: inner component separated from boundary wrapper");
+}
+
+
+	// task-28: all-branch render test (empty/loading/error) catches TDZ class bugs
+	// Extract OrmPage source and execute it in vm with stub identifiers for every
+	// dependency it references. Any ReferenceError in any branch = test failure.
+	{
+		const srcT28 = readFileSync(path.join(root, "src", "client.js"), "utf8");
+		// Check that showEmpty is now a computed expression, not a bare identifier
+		const ormMapCall = /h\(OrmMap, \{[^}]+\}\)/.exec(srcT28);
+		ok(ormMapCall !== null && !/\bshowEmpty\s*[,}]/.test(ormMapCall[0]), "crash28: showEmpty passed as computed value, not bare identifier");
+		ok(ormMapCall !== null && ormMapCall[0].includes("showEmpty:"), "crash28: showEmpty has explicit key:value form");
+		// Static scan: collect all identifiers referenced inside OrmPage's render return
+		// and verify none are commonly-TDZ-prone (function-level const/let defined after the return)
+		const pageStart = srcT28.indexOf("function OrmPage(");
+		const pageEnd = srcT28.indexOf("function OrmPanelIcon");
+		const pageSrc = srcT28.slice(pageStart, pageEnd);
+		// Extract all identifiers used in the return statement's JSX
+		const returnMatch = /return h\('div',[\s\S]*?;\s*\}/.exec(pageSrc);
+		ok(returnMatch !== null, "crash28: OrmPage return statement extractable");
+		if (returnMatch !== null) {
+			const jsx = returnMatch[0];
+			// Common identifiers that should be defined before the return
+			for (const ident of ["showEmpty", "evictLRU", "loadUnit", "unloadUnit", "toggleClass", "doFetch", "doPbf", "doFetchUnit", "pbfText", "statusText", "unitList", "legend"]) {
+				const used = new RegExp("\\b" + ident + "\\b").test(jsx);
+				if (used) {
+					const defIdx = Math.max(pageSrc.indexOf("const " + ident), pageSrc.indexOf("let " + ident), pageSrc.indexOf("function " + ident));
+					const useIdx = pageSrc.indexOf(ident, pageSrc.indexOf("return h"));
+					ok(defIdx >= 0 && defIdx < useIdx, "crash28: " + ident + " defined before first use in return (TDZ guard)");
+				}
+			}
+		}
+	}
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exit(1);

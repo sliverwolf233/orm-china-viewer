@@ -1,6 +1,7 @@
 /** task-16: Kashgar 6-cell verdict — relay rail features vs grid cells that reported 0. */
 import { readFileSync } from "node:fs";
-const shard = JSON.parse(readFileSync("D:/Codes/Deepseek Harness Custom/orm-china-data/units/cn-pbf.rail.geojson", "utf8"));
+const dataDir = process.env.ORM_DATA_DIR ?? process.argv[2] ?? "./orm-china-data";
+const shard = JSON.parse(readFileSync(dataDir + "/units/cn-pbf.rail.geojson", "utf8"));
 const cells = {
 	"g74-36": [74, 36, 76, 38], "g74-38": [74, 38, 76, 40], "g74-40": [74, 40, 76, 42],
 	"g76-36": [76, 36, 78, 38], "g76-38": [76, 38, 78, 40], "g76-40": [76, 40, 78, 42],
@@ -22,7 +23,7 @@ for (const f of shard.features) {
 		}
 	}
 }
-const manifest = JSON.parse(readFileSync("D:/Codes/Deepseek Harness Custom/orm-china-data/manifest.json", "utf8"));
+const manifest = JSON.parse(readFileSync(dataDir + "/manifest.json", "utf8"));
 const gridRows = {};
 for (const id of Object.keys(cells)) {
 	const gid = id.startsWith("beijing") ? "g116-40" : id;
