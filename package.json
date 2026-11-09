@@ -1,0 +1,66 @@
+{
+  "name": "@local/orm-china-viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Offline-first OpenRailwayMap-style viewer for China railway data (DSH local bundle): downloads China-scope railway features via Overpass into local GeoJSON shards and renders them in a Web GUI panel with agent tools for status/fetch/reset.",
+  "scripts": {
+    "build": "node scripts/build-client.mjs",
+    "test": "node test/run.mjs"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "src",
+    "scripts",
+    "vendor",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.zh.md"
+  ],
+  "keywords": [
+    "openrailwaymap",
+    "osm",
+    "overpass",
+    "railway",
+    "geojson",
+    "leaflet",
+    "offline"
+  ],
+  "license": "CC-BY-NC-SA-4.0 OR AGPL-3.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@deepseek-ai/dsh-typert-protocol": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-typert-protocol": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  }
+}

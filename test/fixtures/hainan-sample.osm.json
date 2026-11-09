@@ -1,0 +1,132 @@
+{
+ "version": 0.6,
+ "generator": "Overpass API 0.7.62.11 (test fixture)",
+ "osm3s": {
+  "timestamp_osm_base": "2026-11-08T02:45:21Z"
+ },
+ "elements": [
+  {
+   "type": "node",
+   "id": 101,
+   "lat": 19.1,
+   "lon": 109.6,
+   "tags": {
+    "railway": "station",
+    "name": "八所"
+   }
+  },
+  {
+   "type": "node",
+   "id": 102,
+   "lat": 19.2,
+   "lon": 109.7
+  },
+  {
+   "type": "node",
+   "id": 103,
+   "lat": 19.3,
+   "lon": 109.8
+  },
+  {
+   "type": "node",
+   "id": 104,
+   "lat": 19.4,
+   "lon": 109.9
+  },
+  {
+   "type": "node",
+   "id": 105,
+   "lat": 18.9,
+   "lon": 110,
+   "tags": {
+    "railway": "halt",
+    "name": "小板桥"
+   }
+  },
+  {
+   "type": "node",
+   "id": 106,
+   "lat": 18.8,
+   "lon": 110.1
+  },
+  {
+   "type": "node",
+   "id": 107,
+   "lat": 18.7,
+   "lon": 110.2,
+   "tags": {
+    "railway": "level_crossing"
+   }
+  },
+  {
+   "type": "node",
+   "id": 108,
+   "lat": 18.6,
+   "lon": 110.3
+  },
+  {
+   "type": "way",
+   "id": 201,
+   "nodes": [
+    101,
+    102,
+    103,
+    104
+   ],
+   "tags": {
+    "railway": "rail",
+    "usage": "main",
+    "name": "西环货线"
+   }
+  },
+  {
+   "type": "way",
+   "id": 202,
+   "nodes": [
+    105,
+    106,
+    107,
+    108
+   ],
+   "tags": {
+    "railway": "rail",
+    "tunnel": "yes"
+   }
+  },
+  {
+   "type": "way",
+   "id": 203,
+   "nodes": [
+    102,
+    107
+   ],
+   "tags": {
+    "railway": "rail",
+    "disused": "yes"
+   }
+  },
+  {
+   "type": "way",
+   "id": 204,
+   "nodes": [
+    102,
+    999,
+    108
+   ],
+   "tags": {
+    "railway": "rail"
+   }
+  },
+  {
+   "type": "way",
+   "id": 205,
+   "nodes": [
+    103,
+    104
+   ],
+   "tags": {
+    "highway": "residential"
+   }
+  }
+ ]
+}

@@ -1,0 +1,85 @@
+# orm-china-relay · monthly dual-mode railway relay for @local/orm-china-viewer
+# Modes (keep tag sets in sync with orm-china-viewer scripts/filter_railway.py
+# and lib/convert.js — the plugin test suite asserts all three agree):
+#   all  (A) — national + urban rail ways (subway/tram/light_rail),
+#              stations/halts/tram_stops
+#   rail (B) — national rail only; urban ways AND urban stations excluded
+#              (a subway station is railway=station + subway=yes — excluded
+#              here so stops and lines always stay in the same set)
+# Schedule: monthly on the 1st at 03:00 UTC (11:00 Beijing). Manual dispatch
+# supported. Rolling releases under tags data-all-latest / data-rail-latest.
+name: relay
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 1 * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: relay
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: all
+            tag: data-all-latest
+            ways: "w/railway=rail w/railway=subway w/railway=tram w/railway=light_rail"
+            nodes: "n/railway=station n/railway=halt n/railway=tram_stop"
+            name: china-all-latest.osm.pbf
+          - mode: rail
+            tag: data-rail-latest
+            ways: "w/railway=rail"
+            nodes: "n/railway=station n/railway=halt"
+            name: china-rail-latest.osm.pbf
+    steps:
+      - name: Install osmium-tool
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends osmium-tool
+      - name: Download Geofabrik China extract (cache probe)
+        uses: actions/cache@v4
+        with:
+          path: china-latest.osm.pbf
+          key: geofabrik-china
+      - name: Download Geofabrik China extract
+        run: |
+          set -euo pipefail
+          if [ -s china-latest.osm.pbf ]; then echo "cache hit"; exit 0; fi
+          for i in 1 2 3 4 5; do
+            curl -fL --retry 3 --connect-timeout 30 -o china-latest.osm.pbf \
+              https://download.geofabrik.de/asia/china-latest.osm.pbf && break
+            echo "attempt $i failed; sleeping"; sleep $((i * 20))
+          done
+          test -s china-latest.osm.pbf
+          ls -l china-latest.osm.pbf
+      - name: "Filter (mode: ${{ matrix.mode }})"
+        run: |
+          set -euo pipefail
+          osmium tags-filter china-latest.osm.pbf \
+            ${{ matrix.ways }} ${{ matrix.nodes }} \
+            -o ${{ matrix.name }} --overwrite
+          osmium fileinfo -e ${{ matrix.name }} | tee fileinfo.txt
+          ls -l ${{ matrix.name }}
+      - name: Checksum + metadata
+        run: |
+          sha256sum ${{ matrix.name }} > ${{ matrix.name }}.sha256
+          date -u +%Y-%m-%dT%H:%M:%SZ > generated-at.txt
+          cp fileinfo.txt ${{ matrix.mode }}.fileinfo.txt
+      - name: Publish release (idempotent)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "${{ matrix.tag }}" >/dev/null 2>&1 && gh release delete "${{ matrix.tag }}" --yes || true
+          gh release create "${{ matrix.tag }}" \
+            ${{ matrix.name }} ${{ matrix.name }}.sha256 \
+            ${{ matrix.mode }}.fileinfo.txt generated-at.txt \
+            --title "China railway extract — ${{ matrix.mode }} (rolling)" \
+            --notes "Filtered from download.geofabrik.de/asia/china-latest.osm.pbf (mode: ${{ matrix.mode }}). Data (c) OpenStreetMap contributors, ODbL 1.0. Regenerated monthly + on dispatch; see fileinfo for counts."
