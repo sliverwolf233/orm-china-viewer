@@ -1,0 +1,6 @@
+.pylibs/
+ode_modules/
+orm-china-data/
+__pycache__/
+*.tmp
+*.part
